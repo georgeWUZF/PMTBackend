@@ -175,8 +175,8 @@ router.post('/getWorklogByUserAndMonthForWeb', function(req, res, next) {
   })
 });
 
-//Get team worklog by team and month for web timesheet
-router.post('/getWorklogByTeamAndMonthForWeb', function(req, res, next) {
+//Get worklogs by user list and month for web timesheet
+router.post('/getWorklogByUserListAndMonthForWeb', function(req, res, next) {
   var reqUserList = req.body.wUserList.split(',');
   var reqWorklogMonth = req.body.wWorklogMonth;
   var rtnResult = [];
@@ -240,6 +240,82 @@ router.post('/getWorklogByTeamAndMonthForWeb', function(req, res, next) {
     }
   })
 });
+
+//Get last days worklogs by user list for web timesheet
+router.post('/getPastWorklogByUserForWeb', function(req, res, next) {
+  var reqUserList = req.body.wUserList.split(',');
+  var reqCurrentMonth =  req.body.wCurrentMonth;
+  var reqCurrentMonthDates = req.body.wCurrentMonthDates.split(',');
+  var reqOtherMonth =  req.body.wOtherMonth;
+  var reqOtherMonthDates = req.body.wOtherMonthDates.split(',');
+  //If need to return other month worklogs
+});
+
+function getWorklogsByUserListAndDate(iRequestUserList, iRequestMonth, iRequestDateList) {
+  return new Promise((resolve, reject) => {
+    var rtnResult = [];
+    Worklog.findAll({
+      include: [{
+        model: Task,
+        attributes: ['Id', 'TaskName', 'Description', 'Status', 'Assignee']
+      },{
+        model: User,
+        attributes: ['Name'],
+        where: {
+          Id: { [Op.in]: iRequestUserList }
+        }
+      }],
+      where: {
+        WorklogMonth: iRequestMonth,
+        WorklogDay: { [Op.in]: iRequestDateList },
+        Effort: { [Op.ne]: 0 },
+        Id: { [Op.ne]: null }
+      },
+      order: [
+        ['createdAt', 'DESC']
+      ]
+    }).then(function(worklog) {
+      if(worklog != null && worklog.length > 0) {
+        for(var i=0; i<worklog.length; i++) {
+          var resJson = {};
+          var index = getIndexOfValueInArr(rtnResult, 'user', worklog[i].user.Name);
+          if (index == -1 ) {
+            resJson['user'] = worklog[i].user.Name;
+            resJson['month'] = worklog[i].WorklogMonth;
+            resJson['timesheetData'] = [];
+            rtnResult.push(resJson);
+          } else {
+            continue;
+          }
+        }
+        for(var a=0; a<rtnResult.length; a++) {
+          var timesheetDataArray = [];
+          for(var i=0; i<worklog.length; i++) {
+            if(worklog[i].user.Name == rtnResult[a].user) {
+              var resJson = {};
+              var index = getIndexOfValueInArr(timesheetDataArray, 'task_id', worklog[i].task.Id);
+              if (index == -1 ) {
+                resJson['task_id'] = worklog[i].task.Id;
+                resJson['task'] = worklog[i].task.TaskName + ' - ' + worklog[i].task.Description;
+                resJson['day' + worklog[i].WorklogDay] = worklog[i].Effort;
+                timesheetDataArray.push(resJson);
+              } else {
+                var item = timesheetDataArray[index];
+                if(item['task_id'] == worklog[i].task.Id) {
+                  item['day' + worklog[i].WorklogDay] = worklog[i].Effort;
+                }
+              }
+              rtnResult[a].timesheetData = timesheetDataArray;
+            }
+          }
+        }
+        
+      } else {
+        
+      }
+    })
+  });
+}
 
 router.post('/getWorklogTaskByMonthForWeb', function(req, res, next) {
   var reqWorklogMonth = req.body.sWorklogMonth;
@@ -396,7 +472,7 @@ router.post('/getWorklogForWeb', function(req, res, next) {
   Worklog.findOne({
     include: [{
         model: Task,
-        attributes: ['Id', 'TaskName', 'Effort', 'Estimation']
+        attributes: ['Id', 'TaskName', 'Status', 'Effort', 'Estimation']
     }],
     where: {
         UserId: reqUserId,
@@ -410,6 +486,7 @@ router.post('/getWorklogForWeb', function(req, res, next) {
         resJson.worklog_id = worklog.Id;
         resJson.worklog_task_id = worklog.task.Id;
         resJson.worklog_task_name = worklog.task.TaskName;
+        resJson.worklog_task_status = worklog.task.Status;
         resJson.worklog_effort = worklog.Effort;
         resJson.worklog_remark = worklog.Remark;
         resJson.worklog_task_effort = worklog.task.Effort == null? 0: worklog.task.Effort;
@@ -420,13 +497,14 @@ router.post('/getWorklogForWeb', function(req, res, next) {
         return res.json(responseMessage(0, rtnResult, ''));
       } else {
         Task.findOne({
-            attributes: ['Id', 'TaskName', 'Effort', 'Estimation'],
+            attributes: ['Id', 'TaskName', 'Status', 'Effort', 'Estimation'],
             where: {
               Id: reqTaskId
           }
         }).then(function(task) {
           if(task != null) {
             var resJson = {};
+            resJson.worklog_task_status = task.Status;
             resJson.worklog_task_effort = task.Effort == null? 0: task.Effort;
             resJson.worklog_task_estimation = task.Estimation == null? 0: task.Estimation;
             var percentage2 =  "" + toPercent(task.Effort, task.Estimation);
@@ -624,6 +702,14 @@ router.post('/addOrUpdateWorklog', function(req, res, next) {
   })
 });
 
+router.post('/updateTaskdone', async function(req, res, next) {
+  var reqTaskId = req.body.reqTaskId;
+  var currentDay = getNowFormatDate().split(' ')[0];
+  console.log('Update task - ' + reqTaskId + ' Done and actual complete [' + currentDay + ']');
+  await Task.update({Status: 'Done', ActualCompleteDate: currentDay}, {where: {Id: reqTaskId}});
+  return res.json(responseMessage(0, null, 'Update task status to Done successfully'));
+});
+
 //Remove worklog
 router.post('/removeWorklog', function(req, res, next) {
   console.log('Request: ' + JSON.stringify(req.body));
@@ -679,8 +765,6 @@ router.post('/removeWorklog', function(req, res, next) {
     });
   })
 });
-
-//george
 router.post('/getTaskStatusAndLevel', function(req, res, next) {
   console.log('Request: ' + JSON.stringify(req.body));
   Task.findOne({
@@ -897,8 +981,6 @@ router.post('/adjustWorklogForWeb', function(req, res, next) {
     }
   });
 });
-
-
 
 //Extract report1(only AD/AM/BD for task category) for web PMT
 router.post('/extractReport1ForWeb', function(req, res, next) {
